@@ -78,6 +78,31 @@ setsid nohup .venv/bin/python seven_voice.py > bridge.log 2>&1 < /dev/null &
 
 (Or use systemd, tmux, etc. If you launch it from an agent's background task, know that task timeouts can reap the process — detach it properly.)
 
+### Optional: idle/open-mic silence gate
+
+If the bridge hears you at first but seems to stop transcribing after you sit quietly in VC, the problem may be open-mic room tone. Some voice receive setups keep delivering very low-level PCM packets while nobody is speaking. The bridge then keeps appending “almost silence” to the current utterance instead of seeing a clean pause and flushing to Whisper.
+
+This repo includes an optional Seven Voice patch for that case:
+
+```bash
+# from this repo
+python3 patch_seven_voice_idle_gate.py /path/to/seven-voice/seven_voice.py
+
+# in Seven Voice's .env
+SILENCE_RMS_THRESHOLD=200
+
+# then restart the bridge
+```
+
+What it does: before buffering human PCM audio, it computes RMS volume and drops frames below `SILENCE_RMS_THRESHOLD`. That lets idle room tone behave like silence.
+
+Tuning:
+
+- `200` worked in our first live Cathedral test.
+- If quiet speech gets clipped, lower it (`100`).
+- If fan/room noise still accumulates, raise it (`300–500`).
+- If you use push-to-talk and never see idle dropouts, you probably do not need this patch.
+
 ---
 
 ## Part 2: Let your Letta agent hear the bridge
@@ -165,6 +190,7 @@ Ask your agent to confirm its conversation ID matches — it knows.
 | Agent replies in text, bridge doesn't speak | Bridge bot's `AGENT_USER_IDS` wrong, or reply is in a different channel | Check the bridge `.env`; agent must reply in the bound channel |
 | `!leave` ignored, bot stuck in VC | Voice websocket died (code 1006), bridge wedged in reconnect loop | Kill and restart the bridge process |
 | Bridge dies when your terminal/task closes | Process not detached | `setsid nohup ... &` or systemd |
+| Bridge hears you, then stops after idle silence | Open-mic room tone keeps feeding low-level PCM, so utterances never flush cleanly | Apply `patch_seven_voice_idle_gate.py`, set `SILENCE_RMS_THRESHOLD=200`, restart the bridge |
 
 ---
 
