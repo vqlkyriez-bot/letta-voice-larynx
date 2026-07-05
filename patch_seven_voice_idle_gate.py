@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Optionally patch Seven Voice to ignore open-mic silence before buffering.
 
+Legacy note: for new installs, prefer patch_seven_voice_listener_recovery.py.
+That newer patch includes this RMS silence gate plus listener re-arm/watchdog
+recovery for stale Discord receive sinks.
+
 Some Discord voice receive setups keep delivering low-level "silence"/room tone
 packets while nobody is speaking. If those packets are buffered as speech, the
 bridge may appear to stop transcribing after an idle stretch: it is waiting for a

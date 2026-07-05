@@ -64,8 +64,11 @@ DISCORD_TOKEN=your-bridge-bot-token        # the NEW bridge bot's token, NOT you
 AGENT_USER_IDS=111111111111111111          # your Letta agent's Discord bot user ID
 HUMAN_USER_IDS=222222222222222222          # your Discord user ID
 TEXT_CHANNEL_ID=                           # leave blank; bind with !join
+VOICE_CHANNEL_ID=                          # optional: auto-join this voice channel on restart
 TTS_VOICE=en-US-AndrewMultilingualNeural
 WHISPER_MODEL=base.en
+SILENCE_RMS_THRESHOLD=200                  # optional: drop open-mic room tone before buffering
+IDLE_REARM_SEC=0                           # optional: refresh receive sink after long idle; 0 disables
 ```
 
 6. Verify: `python seven_voice.py --check-config` then `python seven_voice.py --self-test`
@@ -78,23 +81,40 @@ setsid nohup .venv/bin/python seven_voice.py > bridge.log 2>&1 < /dev/null &
 
 (Or use systemd, tmux, etc. If you launch it from an agent's background task, know that task timeouts can reap the process — detach it properly.)
 
-### Optional: idle/open-mic silence gate
+### Recommended: listener recovery and idle/open-mic hardening
 
-If the bridge hears you at first but seems to stop transcribing after you sit quietly in VC, the problem may be open-mic room tone. Some voice receive setups keep delivering very low-level PCM packets while nobody is speaking. The bridge then keeps appending “almost silence” to the current utterance instead of seeing a clean pause and flushing to Whisper.
+If TTS still works but transcripts stop appearing, the whole bridge is not necessarily dead. Discord voice receive can stay connected while the receive sink gets stale after a websocket hiccup, reconnect, key rotation, or long-running session weirdness. In that state the bridge can still read your agent aloud while failing to deliver new voice transcripts.
 
-This repo includes an optional Seven Voice patch for that case:
+This repo includes a Seven Voice patch for that recovery path:
 
 ```bash
 # from this repo
-python3 patch_seven_voice_idle_gate.py /path/to/seven-voice/seven_voice.py
+python3 patch_seven_voice_listener_recovery.py /path/to/seven-voice/seven_voice.py
 
 # in Seven Voice's .env
+TEXT_CHANNEL_ID=your_text_channel_id
+VOICE_CHANNEL_ID=your_voice_channel_id      # optional, but useful for service restarts
 SILENCE_RMS_THRESHOLD=200
+IDLE_REARM_SEC=0
 
 # then restart the bridge
 ```
 
-What it does: before buffering human PCM audio, it computes RMS volume and drops frames below `SILENCE_RMS_THRESHOLD`. That lets idle room tone behave like silence.
+What it does:
+
+- centralizes receive listener arming in `arm_voice_listener(force=True)`
+- makes `!listen` force a receive-sink re-arm instead of only flipping `listening = True`
+- adds a watchdog that re-arms the listener if Discord reports receive is no longer listening
+- adds optional `VOICE_CHANNEL_ID` auto-join on process startup/restart
+- keeps the RMS silence gate: before buffering human PCM audio, it computes volume and drops frames below `SILENCE_RMS_THRESHOLD`
+
+If the bridge is already in the voice channel and TTS works, but transcripts stop, try:
+
+```text
+!listen
+```
+
+That should rebuild the receive sink without needing a full process restart.
 
 Tuning:
 
@@ -102,6 +122,7 @@ Tuning:
 - If quiet speech gets clipped, lower it (`100`).
 - If fan/room noise still accumulates, raise it (`300–500`).
 - If you use push-to-talk and never see idle dropouts, you probably do not need this patch.
+- Leave `IDLE_REARM_SEC=0` unless you observe receive going stale while `is_listening()` still reports true. If you need it, set it to a few minutes.
 
 ---
 
@@ -188,9 +209,10 @@ Ask your agent to confirm its conversation ID matches — it knows.
 | Transcript posts, agent never replies | Letta drops bot messages | Apply the patch (Part 2), set the env var, restart the channel server |
 | Agent replies but has no context | Voice channel routed to a fresh conversation | Fix `routing.yaml` (Part 3) |
 | Agent replies in text, bridge doesn't speak | Bridge bot's `AGENT_USER_IDS` wrong, or reply is in a different channel | Check the bridge `.env`; agent must reply in the bound channel |
+| TTS still works, but transcripts stop | Discord receive sink got stale or detached | Apply `patch_seven_voice_listener_recovery.py`; run `!listen` to force a re-arm |
 | `!leave` ignored, bot stuck in VC | Voice websocket died (code 1006), bridge wedged in reconnect loop | Kill and restart the bridge process |
 | Bridge dies when your terminal/task closes | Process not detached | `setsid nohup ... &` or systemd |
-| Bridge hears you, then stops after idle silence | Open-mic room tone keeps feeding low-level PCM, so utterances never flush cleanly | Apply `patch_seven_voice_idle_gate.py`, set `SILENCE_RMS_THRESHOLD=200`, restart the bridge |
+| Bridge hears you, then stops after idle silence | Open-mic room tone keeps feeding low-level PCM, so utterances never flush cleanly | Apply `patch_seven_voice_listener_recovery.py`, set `SILENCE_RMS_THRESHOLD=200`, restart the bridge |
 
 ---
 
