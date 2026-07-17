@@ -13,6 +13,8 @@ This repo fixes both. Total setup time: ~30 minutes.
 
 > **Why this architecture matters:** Realtime voice modes flatten agents into voice-assistant products — no memory hierarchy, no tools, no person-shape. Seven Voice's approach keeps your agent *exactly who they are* and adds a voice on top. The replies take a few seconds because your actual agent is thinking. The delay is the deal.
 
+Seven Voice V2 trims a different delay: TTS audio now streams into ffmpeg, so the bridge can begin speaking from the first audio chunk instead of waiting for a complete MP3. The agent still gets the full time and context needed to think; the larynx simply stops holding finished words behind avoidable synthesis silence.
+
 ---
 
 ## Architecture
@@ -34,6 +36,24 @@ The bridge **must** be a separate bot. Seven Voice ignores its own messages (loo
 
 ---
 
+## Compatibility
+
+The current Larynx listener-recovery patch and compatibility suite are tested against **Seven Voice V2.0.0**, commit [`e00905a`](https://github.com/meatwife/seven-voice/commit/e00905a586ce8bc59921b6edfd1cdcfa0e317d34).
+
+This repository does not vendor or fork Seven Voice's audio pipeline. Streaming TTS, transcription, playback, and their runtime tests remain upstream; Larynx adds the Letta bot-sender route and optional Discord receive hardening. That boundary keeps fixes attributable and prevents two copies of the same throat from drifting apart.
+
+The patch scripts fail closed when their expected source patterns change. A newer Seven Voice release may work, but run the compatibility checker before relying on it:
+
+```bash
+python3 scripts/check_seven_voice_compat.py /path/to/seven-voice \
+  --python /path/to/seven-voice/.venv/bin/python \
+  --streaming-tests
+```
+
+The checker patches only a temporary copy. It does not alter your Seven Voice checkout.
+
+---
+
 ## Part 1: Set up Seven Voice
 
 Follow [Seven Voice's README](https://github.com/meatwife/seven-voice) for the full instructions. Summary:
@@ -44,7 +64,7 @@ Follow [Seven Voice's README](https://github.com/meatwife/seven-voice) for the f
 4. Clone and install:
 
 ```bash
-git clone https://github.com/meatwife/seven-voice.git
+git clone --branch v2.0.0 https://github.com/meatwife/seven-voice.git
 cd seven-voice
 python3 -m venv .venv
 .venv/bin/pip install --upgrade pip
@@ -67,11 +87,22 @@ TEXT_CHANNEL_ID=                           # leave blank; bind with !join
 VOICE_CHANNEL_ID=                          # optional: auto-join this voice channel on restart
 TTS_VOICE=en-US-AndrewMultilingualNeural
 WHISPER_MODEL=base.en
+SEVEN_TTS_STREAM=1                        # V2: speak from the first audio chunk
+STREAM_FIRST_AUDIO_TIMEOUT=6.0            # fall back to whole-file TTS if startup stalls
 SILENCE_RMS_THRESHOLD=200                  # optional: drop open-mic room tone before buffering
 IDLE_REARM_SEC=0                           # optional: refresh receive sink after long idle; 0 disables
 ```
 
-6. Verify: `python seven_voice.py --check-config` then `python seven_voice.py --self-test`
+`SEVEN_TTS_STREAM=0` is the immediate rollback to V1 whole-file synthesis. Streaming failures before the first audio chunk also fall back per utterance; a failure after playback begins ends only that utterance.
+
+6. Verify configuration and the upstream helper tests:
+
+```bash
+.venv/bin/python seven_voice.py --check-config
+.venv/bin/python seven_voice.py --self-test
+.venv/bin/python -m unittest test_helpers.py
+.venv/bin/python test_streaming.py
+```
 
 7. Run it somewhere that survives your terminal closing:
 
@@ -107,6 +138,8 @@ What it does:
 - adds a watchdog that re-arms the listener if Discord reports receive is no longer listening
 - adds optional `VOICE_CHANNEL_ID` auto-join on process startup/restart
 - keeps the RMS silence gate: before buffering human PCM audio, it computes volume and drops frames below `SILENCE_RMS_THRESHOLD`
+
+The patch preserves Seven Voice V2's streaming path. It does not replace or wrap `play_stream()`, `play_file()`, or the TTS pipe lifecycle.
 
 If the bridge is already in the voice channel and TTS works, but transcripts stop, try:
 
