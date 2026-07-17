@@ -38,7 +38,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes ffmpeg libopus0 libsodium23
           python -m pip install --upgrade pip
-          python -m pip install --pre -r upstream-seven-voice/requirements.txt
+          # PyPI currently publishes discord-ext-voice-recv 0.5.2 only as
+          # 0.5.2a179, which cannot satisfy the upstream >=0.5.2 specifier.
+          # Install the remaining requirements normally, then opt into the
+          # available prerelease explicitly as documented in our README.
+          sed '/^discord-ext-voice-recv/d' upstream-seven-voice/requirements.txt \
+            > /tmp/seven-voice-requirements.txt
+          python -m pip install --pre -r /tmp/seven-voice-requirements.txt
+          python -m pip install --pre discord-ext-voice-recv
 
       - name: Patch and run upstream tests
         run: |
