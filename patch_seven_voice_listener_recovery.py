@@ -48,8 +48,21 @@ def patch(data: str) -> str:
     if "import numpy as np" not in data:
         raise PatchError("expected `import numpy as np` not found; refusing to patch blind")
 
+    # Early Larynx releases added this field without a default. Seven Voice V2's
+    # offline tests construct Config directly, so the required field broke those
+    # callers even though Config.from_env() still worked at runtime. Upgrade old
+    # patched files as well as using the compatible declaration for fresh ones.
+    new = data
+    if "    voice_channel_id: int | None\n" in new:
+        new = replace_once(
+            new,
+            "    voice_channel_id: int | None\n",
+            "    voice_channel_id: int | None = None\n",
+            "voice channel config default",
+        )
+
     already_done = all(
-        marker in data
+        marker in new
         for marker in (
             "voice_channel_id",
             "def arm_voice_listener",
@@ -58,15 +71,13 @@ def patch(data: str) -> str:
         )
     )
     if already_done:
-        return data
+        return new
 
-    new = data
-
-    if "voice_channel_id: int | None" not in new:
+    if "voice_channel_id: int | None = None" not in new:
         new = replace_once(
             new,
             "    text_channel_id: int | None\n",
-            "    text_channel_id: int | None\n    voice_channel_id: int | None\n",
+            "    text_channel_id: int | None\n    voice_channel_id: int | None = None\n",
             "voice channel config field",
         )
 

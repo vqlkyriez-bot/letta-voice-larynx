@@ -1,0 +1,55 @@
+name: Seven Voice V2 compatibility
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compatibility:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out Larynx
+        uses: actions/checkout@v4
+
+      - name: Check out Seven Voice V2
+        uses: actions/checkout@v4
+        with:
+          repository: meatwife/seven-voice
+          ref: e00905a586ce8bc59921b6edfd1cdcfa0e317d34
+          path: upstream-seven-voice
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: upstream-seven-voice/requirements.txt
+
+      - name: Install ffmpeg and Seven Voice dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ffmpeg libopus0 libsodium23
+          python -m pip install --upgrade pip
+          # PyPI currently publishes discord-ext-voice-recv 0.5.2 only as
+          # 0.5.2a179, which cannot satisfy the upstream >=0.5.2 specifier.
+          # Install the remaining requirements normally, then opt into the
+          # available prerelease explicitly as documented in our README.
+          sed '/^discord-ext-voice-recv/d' upstream-seven-voice/requirements.txt \
+            > /tmp/seven-voice-requirements.txt
+          python -m pip install --pre -r /tmp/seven-voice-requirements.txt
+          python -m pip install --pre discord-ext-voice-recv
+
+      - name: Patch and run upstream tests
+        run: |
+          python scripts/check_seven_voice_compat.py upstream-seven-voice \
+            --python "$(command -v python)" \
+            --expected-commit e00905a586ce8bc59921b6edfd1cdcfa0e317d34 \
+            --streaming-tests
